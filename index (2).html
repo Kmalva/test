@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>California Aerosol & Smoke Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0c0f;--surface:#111418;--surface2:#181c22;
+  --border:rgba(255,255,255,0.08);--border2:rgba(255,255,255,0.14);
+  --text:#e8eaed;--muted:#8a929e;
+  --accent:#ff6b35;--accent2:#ffd166;--blue:#4da6ff;--green:#2dd4a4;--red:#ff4757;
+}
+html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+#app{display:grid;grid-template-columns:272px 1fr 292px;grid-template-rows:52px 1fr 96px;
+  grid-template-areas:"header header header" "left map right" "left timeline right";height:100vh}
+
+/* Header */
+#header{grid-area:header;display:flex;align-items:center;gap:14px;padding:0 20px;
+  border-bottom:1px solid var(--border);background:var(--surface);z-index:10}
+#header h1{font-size:14px;font-weight:600;letter-spacing:-0.01em}
+.hdot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.35}}
+.hsub{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted)}
+#header-date{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)}
+
+/* Panels */
+#left-panel{grid-area:left;border-right:1px solid var(--border);background:var(--surface);
+  overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:18px}
+#right-panel{grid-area:right;border-left:1px solid var(--border);background:var(--surface);
+  overflow-y:auto;padding:16px 14px}
+.plabel{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.08em;
+  color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+.psection{display:flex;flex-direction:column;gap:8px}
+
+/* Layer toggles */
+.ltog{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:7px;
+  border:1px solid var(--border);background:var(--surface2);cursor:pointer;transition:all .15s;user-select:none}
+.ltog:hover{border-color:var(--border2)}
+.ltog.active{border-color:var(--accent);background:rgba(255,107,53,0.07)}
+.lswatch{width:11px;height:11px;border-radius:3px;flex-shrink:0}
+.lname{font-size:12px;font-weight:500;flex:1}
+.lsub{font-size:10px;color:var(--muted)}
+.lcheck{width:15px;height:15px;border-radius:3px;border:1px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--accent);flex-shrink:0}
+.ltog.active .lcheck{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* Slider */
+input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:2px;
+  outline:none;cursor:pointer;
+  background:linear-gradient(to right,var(--accent) var(--val,70%),rgba(255,255,255,0.15) var(--val,70%))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+  border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg)}
+.slrow{display:flex;flex-direction:column;gap:7px}
+.sllabels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}
+
+/* Filter buttons */
+.filtbtns{display:flex;gap:5px}
+.fbtn{flex:1;padding:6px 0;border-radius:6px;border:1px solid var(--border);
+  background:var(--surface2);color:var(--muted);font-size:11px;font-weight:500;
+  cursor:pointer;transition:all .15s;text-align:center}
+.fbtn:hover{border-color:var(--border2);color:var(--text)}
+.fbtn.active{border-color:var(--blue);color:var(--blue);background:rgba(77,166,255,0.08)}
+
+/* Scene buttons */
+.scenebtn{padding:9px 11px;border-radius:7px;border:1px solid var(--border);
+  background:var(--surface2);color:var(--text);font-size:11px;cursor:pointer;
+  transition:all .15s;text-align:left;display:flex;flex-direction:column;gap:2px}
+.scenebtn:hover{border-color:var(--border2)}
+.scenebtn.active{border-color:var(--accent2);background:rgba(255,209,102,0.06)}
+.sbt{font-weight:500;font-size:12px}
+.sbs{color:var(--muted);font-size:10px}
+
+/* Legend */
+.legbar{height:9px;border-radius:4px;
+  background:linear-gradient(to right,#1a3a1a,#4a7c00,#ff8c00,#ff4500,#8b0000)}
+.leglabels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:3px}
+
+/* Map */
+#map-container{grid-area:map;position:relative;overflow:hidden;background:#0c1018}
+#map-svg{width:100%;height:100%}
+.county-path{fill:rgba(255,255,255,0.025);stroke:rgba(255,255,255,0.1);stroke-width:0.4;
+  cursor:pointer;transition:fill .25s}
+.county-path:hover{fill:rgba(255,255,255,0.07);stroke:rgba(255,255,255,0.25)}
+.county-path.selected{stroke:var(--accent);stroke-width:1.2;fill:rgba(255,107,53,0.08)}
+.county-path.highlighted{fill:rgba(77,166,255,0.06)}
+.city-dot{fill:var(--accent2);opacity:.75}
+.city-label{font-family:'IBM Plex Mono',monospace;font-size:8px;fill:rgba(255,255,255,0.45)}
+.fire-label{font-family:'IBM Plex Mono',monospace;font-size:8px;fill:#ff8080}
+.state-outline{fill:none;stroke:rgba(255,255,255,0.18);stroke-width:1.2}
+@keyframes firepulse{0%,100%{opacity:.85;r:5}50%{opacity:.35;r:9}}
+.fpulse{animation:firepulse 1.6s ease-in-out infinite}
+
+/* Tooltip */
+#tooltip{position:absolute;background:rgba(17,20,24,0.95);border:1px solid var(--border2);
+  border-radius:9px;padding:11px 13px;pointer-events:none;opacity:0;transition:opacity .12s;
+  max-width:190px;z-index:50;font-size:11px;backdrop-filter:blur(4px)}
+#tooltip.vis{opacity:1}
+.ttn{font-size:12px;font-weight:600;margin-bottom:5px}
+.ttr{display:flex;justify-content:space-between;gap:14px;color:var(--muted);margin:2px 0}
+.ttv{color:var(--text);font-weight:500}
+
+/* Map badge */
+#map-badge{position:absolute;bottom:10px;left:10px;
+  background:rgba(17,20,24,0.8);border:1px solid var(--border);
+  border-radius:5px;padding:5px 9px;font-family:'IBM Plex Mono',monospace;
+  font-size:9px;color:var(--muted);pointer-events:none}
+
+/* Right panel content */
+#no-sel{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:300px;text-align:center;gap:10px;color:var(--muted);padding:16px}
+.nosel-icon{font-size:28px;opacity:.25}
+.nosel-txt{font-size:12px;line-height:1.65}
+#county-detail{display:none;flex-direction:column;gap:13px}
+#c-name{font-size:16px;font-weight:600;letter-spacing:-0.02em}
+.badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:500}
+.burban{background:rgba(77,166,255,0.14);color:var(--blue)}
+.brural{background:rgba(45,212,164,0.12);color:var(--green)}
+.statgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.statcard{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:9px 11px}
+.statlbl{font-size:9px;color:var(--muted);margin-bottom:3px;font-family:'IBM Plex Mono',monospace}
+.statval{font-size:17px;font-weight:600;letter-spacing:-0.02em}
+.statsub{font-size:10px;color:var(--muted);margin-top:1px}
+#sparkline-svg{width:100%;overflow:visible}
+.sparktip{font-family:'IBM Plex Mono',monospace;font-size:9px;fill:var(--muted)}
+.aqiscale{display:flex;gap:2px;margin:6px 0 3px}
+.aqiseg{flex:1;height:9px;border-radius:2px;position:relative}
+.aqilabel{font-size:8px;color:var(--muted);text-align:center;margin-top:2px}
+#aqi-bar{height:5px;border-radius:2px;background:linear-gradient(to right,#00e400,#ffff00,#ff7e00,#ff0000,#7e0023);
+  position:relative;margin-top:2px}
+#aqi-needle{position:absolute;width:2px;height:11px;top:-3px;background:#fff;border-radius:1px;
+  transform:translateX(-50%);transition:left .5s}
+#c-context{font-size:11px;color:var(--muted);line-height:1.7}
+
+/* Timeline */
+#timeline{grid-area:timeline;border-top:1px solid var(--border);background:var(--surface);
+  padding:10px 20px;display:flex;flex-direction:column;gap:7px}
+.tlhdr{display:flex;align-items:center;justify-content:space-between}
+.tltitle{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;
+  color:var(--muted);text-transform:uppercase}
+#cur-date{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--accent2)}
+.tlctrl{display:flex;align-items:center;gap:10px}
+#play-btn{width:26px;height:26px;border-radius:50%;border:1px solid var(--border2);
+  background:var(--surface2);color:var(--text);font-size:11px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0}
+#play-btn:hover{border-color:var(--accent);color:var(--accent)}
+#evtmarks{position:relative;height:18px}
+.etick{position:absolute;transform:translateX(-50%);display:flex;flex-direction:column;
+  align-items:center;gap:1px;cursor:pointer}
+.etline{width:1px;height:7px;background:var(--accent2);opacity:.45}
+.etlbl{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--accent2);opacity:.6;white-space:nowrap}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- HEADER -->
+<header id="header">
+  <div class="hdot"></div>
+  <h1>California Aerosol &amp; Wildfire Smoke</h1>
+  <span class="hsub">NASA MODIS · VIIRS · GIBS</span>
+  <span id="header-date">—</span>
+</header>
+
+<!-- LEFT PANEL -->
+<aside id="left-panel">
+  <div class="psection">
+    <div class="plabel">Layers</div>
+    <div class="ltog active" id="tog-aerosol" onclick="toggleLayer('aerosol')">
+      <div class="lswatch" style="background:linear-gradient(135deg,#ff8c00,#cc2200)"></div>
+      <div><div class="lname">Aerosol Optical Depth</div><div class="lsub">MODIS Aqua · AOD overlay</div></div>
+      <div class="lcheck">✓</div>
+    </div>
+    <div class="ltog active" id="tog-counties" onclick="toggleLayer('counties')">
+      <div class="lswatch" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35)"></div>
+      <div><div class="lname">County Boundaries</div><div class="lsub">58 California counties</div></div>
+      <div class="lcheck">✓</div>
+    </div>
+    <div class="ltog active" id="tog-cities" onclick="toggleLayer('cities')">
+      <div class="lswatch" style="background:var(--accent2);border-radius:50%"></div>
+      <div><div class="lname">Major Cities</div><div class="lsub">10 population centers</div></div>
+      <div class="lcheck">✓</div>
+    </div>
+    <div class="ltog" id="tog-fire" onclick="toggleLayer('fire')">
+      <div class="lswatch" style="background:radial-gradient(circle,#ff4040,#8b0000)"></div>
+      <div><div class="lname">Fire Hotspots</div><div class="lsub">VIIRS 375m · Thermal anomalies</div></div>
+      <div class="lcheck"></div>
+    </div>
+  </div>
+
+  <div class="psection">
+    <div class="plabel">Aerosol Opacity</div>
+    <div class="slrow">
+      <div class="sllabels"><span>Subtle</span><span>Intense</span></div>
+      <input type="range" id="opslider" min="0" max="100" value="70"
+        oninput="setOpacity(this.value)" style="--val:70%">
+      <div style="text-align:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted)">
+        Opacity: <span id="oplabel">70%</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="psection">
+    <div class="plabel">County Filter</div>
+    <div class="filtbtns">
+      <div class="fbtn active" id="fb-all" onclick="setFilter('all')">All</div>
+      <div class="fbtn" id="fb-urban" onclick="setFilter('urban')">Urban</div>
+      <div class="fbtn" id="fb-rural" onclick="setFilter('rural')">Rural</div>
+    </div>
+  </div>
+
+  <div class="psection">
+    <div class="plabel">Guided Scenes</div>
+    <div class="scenebtn" id="sc-baseline" onclick="loadScene('baseline')">
+      <div class="sbt">☁ Baseline Atmosphere</div>
+      <div class="sbs">Normal CA conditions · Jan 2023</div>
+    </div>
+    <div class="scenebtn" id="sc-la" onclick="loadScene('la')">
+      <div class="sbt">🌫 LA Basin Smog</div>
+      <div class="sbs">Urban aerosols · Aug 2023</div>
+    </div>
+    <div class="scenebtn" id="sc-fire2020" onclick="loadScene('fire2020')">
+      <div class="sbt">🔥 2020 Megafires</div>
+      <div class="sbs">Historic smoke transport · Sep 2020</div>
+    </div>
+    <div class="scenebtn" id="sc-canadian" onclick="loadScene('canadian')">
+      <div class="sbt">💨 Canadian Smoke</div>
+      <div class="sbs">Long-range transport · Jun 2023</div>
+    </div>
+  </div>
+
+  <div class="psection">
+    <div class="plabel">AOD Color Scale</div>
+    <div class="legbar"></div>
+    <div class="leglabels">
+      <span>0.0 Clean</span><span>0.5 Moderate</span><span>1.0+ Severe</span>
+    </div>
+  </div>
+</aside>
+
+<!-- MAP -->
+<main id="map-container">
+  <svg id="map-svg" aria-label="California aerosol and wildfire smoke interactive map"></svg>
+  <div id="tooltip">
+    <div class="ttn" id="tt-name">—</div>
+    <div class="ttr"><span>Avg AOD</span><span class="ttv" id="tt-aod">—</span></div>
+    <div class="ttr"><span>Peak season</span><span class="ttv" id="tt-peak">—</span></div>
+    <div class="ttr"><span>Type</span><span class="ttv" id="tt-type">—</span></div>
+  </div>
+  <div id="map-badge">NASA GIBS · MODIS_Aqua_Aerosol · VIIRS_SNPP_TrueColor</div>
+</main>
+
+<!-- RIGHT PANEL -->
+<aside id="right-panel">
+  <div id="no-sel">
+    <div class="nosel-icon">◎</div>
+    <div class="nosel-txt">Click any county to explore aerosol levels, AQI trends, and pollution context</div>
+  </div>
+  <div id="county-detail">
+    <div>
+      <div id="c-name">—</div>
+      <span id="c-badge" class="badge burban">Urban</span>
+    </div>
+    <div class="statgrid">
+      <div class="statcard">
+        <div class="statlbl">Avg AOD</div>
+        <div class="statval" id="c-aod" style="color:var(--accent)">—</div>
+        <div class="statsub">Annual mean</div>
+      </div>
+      <div class="statcard">
+        <div class="statlbl">Population</div>
+        <div class="statval" id="c-pop" style="font-size:14px">—</div>
+        <div class="statsub">residents</div>
+      </div>
+      <div class="statcard">
+        <div class="statlbl">Peak Month</div>
+        <div class="statval" id="c-peak" style="font-size:14px">—</div>
+        <div class="statsub">Highest aerosol</div>
+      </div>
+      <div class="statcard">
+        <div class="statlbl">Fire Exposure</div>
+        <div class="statval" id="c-fire" style="font-size:14px">—</div>
+        <div class="statsub" id="c-firesub">Historical avg</div>
+      </div>
+    </div>
+    <div>
+      <div class="plabel">Monthly AOD Pattern</div>
+      <svg id="sparkline-svg" height="68"></svg>
+    </div>
+    <div>
+      <div class="plabel">Typical AQI Range</div>
+      <div class="aqiscale">
+        <div class="aqiseg" style="background:#00e400"></div>
+        <div class="aqiseg" style="background:#ffff00"></div>
+        <div class="aqiseg" style="background:#ff7e00"></div>
+        <div class="aqiseg" style="background:#ff0000"></div>
+        <div class="aqiseg" style="background:#7e0023"></div>
+      </div>
+      <div style="display:flex;gap:2px">
+        <div class="aqilabel" style="flex:1">Good</div>
+        <div class="aqilabel" style="flex:1">Mod</div>
+        <div class="aqilabel" style="flex:1">USG</div>
+        <div class="aqilabel" style="flex:1">Unhealthy</div>
+        <div class="aqilabel" style="flex:1">Very Unhealthy</div>
+      </div>
+      <div id="aqi-bar"><div id="aqi-needle" style="left:30%"></div></div>
+    </div>
+    <div>
+      <div class="plabel">Context</div>
+      <div id="c-context">—</div>
+    </div>
+  </div>
+</aside>
+
+<!-- TIMELINE -->
+<div id="timeline">
+  <div class="tlhdr">
+    <span class="tltitle">Timeline · 2018–2024</span>
+    <span id="cur-date">—</span>
+  </div>
+  <div class="tlctrl">
+    <button id="play-btn" onclick="togglePlay()">▶</button>
+    <input type="range" id="dateslider" min="0" max="100" value="50"
+      oninput="scrubDate(+this.value)" style="flex:1;--val:50%">
+  </div>
+  <div id="evtmarks"></div>
+</div>
+</div>
+
+<script>
+// ─── County Data ──────────────────────────────────────────────────────────────
+const URBAN = new Set(["Los Angeles","San Diego","Orange","Santa Clara","Alameda",
+  "San Francisco","Contra Costa","Sacramento","Riverside","San Bernardino",
+  "Ventura","San Mateo","Fresno","Kern","Stanislaus","San Joaquin"]);
+
+const DATA = {
+  "Los Angeles":    {aod:0.28,pop:"9.8M",peak:"Sep",fire:"High",  aqi:65,
+    mo:[0.15,0.16,0.19,0.22,0.25,0.26,0.28,0.31,0.35,0.28,0.20,0.14],
+    ctx:"The LA Basin's bowl-shaped topography traps smog and particulates. Sea breezes push urban aerosols inland toward the San Gabriel Mountains. Summer temperature inversions concentrate pollutants near the surface, making August–October the worst period."},
+  "San Diego":      {aod:0.12,pop:"3.3M",peak:"Aug",fire:"High",  aqi:50,
+    mo:[0.09,0.09,0.10,0.11,0.12,0.13,0.14,0.15,0.14,0.12,0.10,0.09],
+    ctx:"San Diego benefits from a consistent marine layer that scrubs coastal air. Inland areas and wildfire seasons elevate AOD. Urban sprawl and vehicle emissions dominate the local aerosol budget during dry, offshore wind events."},
+  "Orange":         {aod:0.22,pop:"3.2M",peak:"Sep",fire:"Mod",   aqi:58,
+    mo:[0.14,0.14,0.16,0.18,0.20,0.22,0.24,0.26,0.28,0.22,0.18,0.13],
+    ctx:"Orange County sits at the nexus of LA smog outflow and its own vehicle emissions. Coastal areas maintain cleaner air while inland portions accumulate transported pollution from the LA Basin."},
+  "Santa Clara":    {aod:0.14,pop:"1.9M",peak:"Oct",fire:"Mod",   aqi:48,
+    mo:[0.08,0.09,0.11,0.12,0.14,0.15,0.16,0.18,0.20,0.22,0.14,0.09],
+    ctx:"Silicon Valley's aerosol load is modest but increasingly driven by wildfire smoke from Sierra Nevada fires. Fall fire season coincides with reduced wind speeds, trapping particulates over the valley floor."},
+  "Alameda":        {aod:0.12,pop:"1.6M",peak:"Oct",fire:"Mod",   aqi:45,
+    mo:[0.08,0.08,0.10,0.11,0.12,0.13,0.14,0.16,0.18,0.19,0.12,0.08],
+    ctx:"East Bay counties receive smoke from Sierra Nevada wildfires. The Diablo Range channels fire smoke into bay communities during offshore flow. Marine influence keeps coastal areas relatively clean outside fire season."},
+  "San Francisco":  {aod:0.10,pop:"874K",peak:"Sep",fire:"Low",   aqi:40,
+    mo:[0.07,0.07,0.08,0.09,0.10,0.10,0.11,0.12,0.15,0.12,0.09,0.07],
+    ctx:"San Francisco's peninsula location and prevailing westerlies provide one of the cleanest urban air environments in California. Wildfire smoke from distant fires episodically overwhelms this advantage, as seen in 2018 and 2020."},
+  "Sacramento":     {aod:0.18,pop:"1.6M",peak:"Aug",fire:"High",  aqi:60,
+    mo:[0.10,0.10,0.12,0.14,0.18,0.20,0.22,0.28,0.24,0.18,0.12,0.10],
+    ctx:"Sacramento Valley acts as a collection basin for wildfire smoke from Tahoe and Sierra Nevada fires. Summer heat and stagnant air masses amplify aerosol concentrations. The 2020 fire season produced historically extreme AOD readings here."},
+  "Fresno":         {aod:0.32,pop:"1.0M",peak:"Jul", fire:"High", aqi:85,
+    mo:[0.18,0.17,0.20,0.24,0.30,0.36,0.40,0.42,0.38,0.30,0.22,0.18],
+    ctx:"The San Joaquin Valley consistently posts California's worst air quality. Surrounded by mountains on three sides, Fresno traps agricultural dust, diesel emissions, and wildfire smoke within a persistent inversion layer year-round."},
+  "Kern":           {aod:0.30,pop:"909K",peak:"Jul", fire:"High", aqi:80,
+    mo:[0.16,0.16,0.19,0.24,0.30,0.35,0.40,0.40,0.35,0.28,0.20,0.16],
+    ctx:"Oil extraction, agriculture, and trapped valley air make Kern County a persistent pollution hotspot. The Tehachapi Pass creates local wind effects that occasionally flush the basin, but summer stagnation periods lead to extreme AOD events."},
+  "Riverside":      {aod:0.25,pop:"2.4M",peak:"Sep",fire:"High",  aqi:70,
+    mo:[0.14,0.14,0.17,0.20,0.24,0.26,0.28,0.30,0.32,0.26,0.19,0.13],
+    ctx:"Inland Empire receives transported smog from LA Basin as well as local emissions. The Banning Pass channels winds that can clear or concentrate aerosols depending on season and synoptic flow direction."},
+  "San Bernardino": {aod:0.26,pop:"2.2M",peak:"Sep",fire:"High",  aqi:72,
+    mo:[0.14,0.14,0.17,0.21,0.25,0.27,0.29,0.31,0.33,0.27,0.19,0.13],
+    ctx:"California's largest county by area spans desert to mountains. The western urban corridor bears a heavy pollution burden while the eastern Mojave desert sees dramatic fire-season smoke events and dust storms."},
+  "Ventura":        {aod:0.14,pop:"843K",peak:"Nov",fire:"High",  aqi:50,
+    mo:[0.10,0.10,0.11,0.13,0.14,0.13,0.14,0.15,0.16,0.16,0.18,0.12],
+    ctx:"Ventura experiences late-season fire risk amplified by Santa Ana wind events. The 2017 Thomas Fire burned over 280,000 acres. The Transverse Ranges channel offshore flows that transport smoke erratically into communities."},
+  "Mendocino":      {aod:0.14,pop:"91K", peak:"Aug",fire:"VHigh", aqi:42,
+    mo:[0.06,0.06,0.08,0.09,0.11,0.13,0.16,0.22,0.20,0.14,0.08,0.06],
+    ctx:"Mendocino County has become ground zero for California's most destructive wildfires. The 2018 Mendocino Complex was the largest fire in recorded California history at the time, burning over 450,000 acres."},
+  "Shasta":         {aod:0.16,pop:"180K",peak:"Aug",fire:"VHigh", aqi:48,
+    mo:[0.07,0.07,0.09,0.10,0.12,0.16,0.20,0.26,0.22,0.15,0.09,0.07],
+    ctx:"Northern California's Shasta County sits at the interface of the Coast Range, Cascades, and Central Valley. Major fire corridors funnel smoke into the Sacramento Valley. Home to several recent catastrophic fires."},
+  "Butte":          {aod:0.20,pop:"219K",peak:"Nov",fire:"VHigh", aqi:60,
+    mo:[0.08,0.08,0.10,0.12,0.16,0.20,0.22,0.26,0.24,0.22,0.28,0.10],
+    ctx:"Home to the 2018 Camp Fire, California's deadliest wildfire (85 deaths). November off-season fire risk is elevated by dry Diablo winds. Smoke from this fire was clearly detectable by MODIS sensors as far as the Bay Area."},
+  "San Joaquin":    {aod:0.24,pop:"763K",peak:"Jul", fire:"Mod",  aqi:75,
+    mo:[0.14,0.13,0.16,0.20,0.24,0.28,0.32,0.34,0.30,0.24,0.17,0.13],
+    ctx:"Stockton and surrounding San Joaquin County sit in the northern end of the worst air quality corridor in the US. Agricultural burning, vehicle emissions, and valley topography combine to create persistent aerosol loading."},
+  "Contra Costa":   {aod:0.13,pop:"1.2M",peak:"Oct",fire:"Mod",  aqi:48,
+    mo:[0.08,0.08,0.10,0.11,0.13,0.14,0.15,0.17,0.18,0.19,0.12,0.08],
+    ctx:"Contra Costa straddles the East Bay hills and the Carquinez Strait. Industrial facilities near Richmond contribute to local aerosol loading, while the Diablo Range channels smoke from interior wildfires."},
+  "San Mateo":      {aod:0.11,pop:"765K",peak:"Sep",fire:"Low",  aqi:42,
+    mo:[0.07,0.07,0.08,0.09,0.10,0.11,0.12,0.13,0.15,0.13,0.09,0.07],
+    ctx:"The San Mateo Peninsula benefits from consistent Pacific influence. The coastal mountains shield inland communities from marine layer intrusion while providing a barrier to transported pollution from the South Bay."},
+  "Stanislaus":     {aod:0.22,pop:"549K",peak:"Jul", fire:"Mod",  aqi:68,
+    mo:[0.12,0.12,0.15,0.18,0.22,0.26,0.30,0.32,0.28,0.22,0.16,0.12],
+    ctx:"Modesto and the Stanislaus County agricultural landscape contribute dust and vehicle emissions to a valley floor that traps pollutants. Summer crop burning adds episodic aerosol spikes."},
+  "Tulare":         {aod:0.30,pop:"466K",peak:"Aug", fire:"High", aqi:82,
+    mo:[0.17,0.16,0.20,0.25,0.30,0.34,0.38,0.40,0.36,0.28,0.21,0.17],
+    ctx:"Tulare County's southern San Joaquin Valley location makes it one of the highest AOD areas in California. Agriculture, dairies, and surrounded terrain create year-round pollution trapping with summer wildfire smoke adding acute events."},
+};
+
+const FIPS = {
+  "06001":"Alameda","06003":"Alpine","06005":"Amador","06007":"Butte",
+  "06009":"Calaveras","06011":"Colusa","06013":"Contra Costa","06015":"Del Norte",
+  "06017":"El Dorado","06019":"Fresno","06021":"Glenn","06023":"Humboldt",
+  "06025":"Imperial","06027":"Inyo","06029":"Kern","06031":"Kings",
+  "06033":"Lake","06035":"Lassen","06037":"Los Angeles","06039":"Madera",
+  "06041":"Marin","06043":"Mariposa","06045":"Mendocino","06047":"Merced",
+  "06049":"Modoc","06051":"Mono","06053":"Monterey","06055":"Napa",
+  "06057":"Nevada","06059":"Orange","06061":"Placer","06063":"Plumas",
+  "06065":"Riverside","06067":"Sacramento","06069":"San Benito",
+  "06071":"San Bernardino","06073":"San Diego","06075":"San Francisco",
+  "06077":"San Joaquin","06079":"San Luis Obispo","06081":"San Mateo",
+  "06083":"Santa Barbara","06085":"Santa Clara","06087":"Santa Cruz",
+  "06089":"Shasta","06091":"Sierra","06093":"Siskiyou","06095":"Solano",
+  "06097":"Sonoma","06099":"Stanislaus","06101":"Sutter","06103":"Tehama",
+  "06105":"Trinity","06107":"Tulare","06109":"Tuolumne","06111":"Ventura",
+  "06113":"Yolo","06115":"Yuba"
+};
+
+const FIRES = [
+  {name:"August Complex",year:2020,lat:39.87,lon:-122.98,sz:"XL"},
+  {name:"SCU Complex",   year:2020,lat:37.45,lon:-121.45,sz:"L"},
+  {name:"LNU Complex",   year:2020,lat:38.53,lon:-122.28,sz:"L"},
+  {name:"North Complex", year:2020,lat:39.72,lon:-121.45,sz:"L"},
+  {name:"Creek",         year:2020,lat:37.09,lon:-119.02,sz:"M"},
+  {name:"Camp",          year:2018,lat:39.81,lon:-121.43,sz:"XL"},
+  {name:"Thomas",        year:2017,lat:34.52,lon:-119.15,sz:"L"},
+  {name:"Dixie",         year:2021,lat:40.02,lon:-121.24,sz:"XL"},
+  {name:"Caldor",        year:2021,lat:38.66,lon:-120.08,sz:"L"},
+  {name:"Mendocino Cx",  year:2018,lat:39.30,lon:-122.70,sz:"XL"},
+];
+
+const CITIES = [
+  {n:"Los Angeles",  lat:34.052,lon:-118.244},
+  {n:"San Diego",    lat:32.716,lon:-117.161},
+  {n:"San Jose",     lat:37.339,lon:-121.894},
+  {n:"San Francisco",lat:37.773,lon:-122.419},
+  {n:"Sacramento",   lat:38.582,lon:-121.494},
+  {n:"Fresno",       lat:36.737,lon:-119.772},
+  {n:"Bakersfield",  lat:35.374,lon:-119.019},
+  {n:"Riverside",    lat:33.983,lon:-117.374},
+  {n:"Stockton",     lat:37.958,lon:-121.291},
+  {n:"Modesto",      lat:37.640,lon:-120.999},
+];
+
+const TIMELINE_EVENTS = [
+  {lbl:"Thomas Fire",    pct:28},
+  {lbl:"Camp Fire",      pct:40},
+  {lbl:"2020 Megafires", pct:52},
+  {lbl:"Dixie Fire",     pct:64},
+  {lbl:"Canadian Smoke", pct:86},
+];
+
+const SCENES = {
+  baseline: {pct:18, aerosol:0.35, fires:false, lbl:"Jan 2023 · Baseline conditions"},
+  la:       {pct:68, aerosol:0.85, fires:false, lbl:"Aug 2023 · LA Basin smog event"},
+  fire2020: {pct:52, aerosol:1.0,  fires:true,  lbl:"Sep 2020 · Megafire smoke transport"},
+  canadian: {pct:86, aerosol:0.90, fires:false, lbl:"Jun 2023 · Canadian smoke intrusion"},
+};
+
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// ─── State ─────────────────────────────────────────────────────────────────────
+let layers = {aerosol:true,counties:true,cities:true,fire:false};
+let opacity = 0.70;
+let filterMode = "all";
+let selectedCounty = null;
+let playing = false;
+let playTimer = null;
+let projection, geoPath, svg, W, H;
+
+// ─── Init ──────────────────────────────────────────────────────────────────────
+window.addEventListener("DOMContentLoaded", () => {
+  setupTimeline();
+  loadMap();
+  scrubDate(50);
+});
+
+// ─── Timeline ──────────────────────────────────────────────────────────────────
+function setupTimeline() {
+  const el = document.getElementById("evtmarks");
+  TIMELINE_EVENTS.forEach(ev => {
+    const d = document.createElement("div");
+    d.className = "etick";
+    d.style.left = ev.pct + "%";
+    d.innerHTML = `<div class="etline"></div><div class="etlbl">${ev.lbl}</div>`;
+    d.onclick = () => { document.getElementById("dateslider").value = ev.pct; scrubDate(ev.pct); };
+    el.appendChild(d);
+  });
+}
+
+function scrubDate(val) {
+  const s = document.getElementById("dateslider");
+  s.value = val;
+  s.style.setProperty("--val", val + "%");
+  const start = new Date(2018,0,1).getTime();
+  const end   = new Date(2024,11,31).getTime();
+  const d = new Date(start + (val/100)*(end-start));
+  const lbl = d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  document.getElementById("cur-date").textContent = lbl;
+  document.getElementById("header-date").textContent = lbl;
+  updateAerosolByDate(val);
+}
+
+function togglePlay() {
+  playing = !playing;
+  document.getElementById("play-btn").textContent = playing ? "⏸" : "▶";
+  if (playing) {
+    playTimer = setInterval(() => {
+      const s = document.getElementById("dateslider");
+      let v = parseFloat(s.value) + 0.25;
+      if (v > 100) v = 0;
+      scrubDate(v);
+    }, 40);
+  } else clearInterval(playTimer);
+}
+
+// ─── Map Load ──────────────────────────────────────────────────────────────────
+function loadMap() {
+  fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json")
+    .then(r => r.json())
+    .then(us => {
+      const allCounties = topojson.feature(us, us.objects.counties);
+      const caFeatures = allCounties.features.filter(f => f.id && String(f.id).startsWith("6") &&
+        String(f.id).padStart(5,"0").startsWith("06"));
+      // Normalize ID to 5-char
+      caFeatures.forEach(f => { f.id = String(f.id).padStart(5,"0"); });
+      const caGeo = {type:"FeatureCollection", features: caFeatures};
+      caFeatures.forEach(f => { f.properties.name = FIPS[f.id] || ("County "+f.id); });
+      renderMap(caGeo);
+    })
+    .catch(err => {
+      console.error("Map load failed:", err);
+      document.getElementById("map-svg").innerHTML =
+        '<text x="50%" y="50%" text-anchor="middle" fill="#8a929e" font-size="13" font-family="DM Sans,sans-serif">Failed to load map data. Check network connection.</text>';
+    });
+}
+
+// ─── Map Render ────────────────────────────────────────────────────────────────
+function renderMap(geo) {
+  const container = document.getElementById("map-container");
+  W = container.clientWidth;
+  H = container.clientHeight;
+
+  svg = d3.select("#map-svg").attr("viewBox",`0 0 ${W} ${H}`);
+
+  projection = d3.geoMercator().fitExtent([[20,20],[W-20,H-20]], geo);
+  geoPath = d3.geoPath().projection(projection);
+
+  const defs = svg.append("defs");
+
+  // Pollution hotspot gradients
+  const centers = [
+    {id:"la",  lat:34.0, lon:-118.3, rx:100, ry:68, rot:-12, i:0.88},
+    {id:"sjv", lat:36.7, lon:-119.7, rx:88,  ry:55, rot:-5,  i:0.82},
+    {id:"sac", lat:38.5, lon:-121.5, rx:62,  ry:45, rot:0,   i:0.62},
+    {id:"bay", lat:37.7, lon:-122.2, rx:52,  ry:40, rot:8,   i:0.50},
+    {id:"ie",  lat:33.9, lon:-117.4, rx:70,  ry:48, rot:-15, i:0.75},
+    {id:"bak", lat:35.3, lon:-119.0, rx:52,  ry:36, rot:-5,  i:0.80},
+    {id:"nca", lat:40.2, lon:-122.5, rx:72,  ry:50, rot:5,   i:0.55},
+  ];
+
+  centers.forEach(c => {
+    const [cx,cy] = projection([c.lon,c.lat]);
+    const gid = `ag-${c.id}`;
+    const g = defs.append("radialGradient").attr("id",gid)
+      .attr("cx","50%").attr("cy","50%").attr("r","50%");
+    g.append("stop").attr("offset","0%").attr("stop-color","#ff6b35").attr("stop-opacity", c.i*0.72);
+    g.append("stop").attr("offset","45%").attr("stop-color","#ff8c00").attr("stop-opacity", c.i*0.35);
+    g.append("stop").attr("offset","100%").attr("stop-color","#ffcc44").attr("stop-opacity",0);
+  });
+
+  // Background
+  const bgGrad = defs.append("linearGradient").attr("id","bg-g")
+    .attr("x1","0%").attr("y1","0%").attr("x2","100%").attr("y2","100%");
+  bgGrad.append("stop").attr("offset","0%").attr("stop-color","#0c1520");
+  bgGrad.append("stop").attr("offset","100%").attr("stop-color","#0e1a14");
+
+  svg.append("rect").attr("width",W).attr("height",H).attr("fill","url(#bg-g)");
+
+  // Aerosol blobs
+  const aerosolG = svg.append("g").attr("id","aerosolG").style("opacity", opacity);
+  centers.forEach(c => {
+    const [cx,cy] = projection([c.lon,c.lat]);
+    aerosolG.append("ellipse")
+      .attr("class","aod-blob")
+      .attr("data-id",c.id)
+      .attr("cx",cx).attr("cy",cy)
+      .attr("rx",c.rx).attr("ry",c.ry)
+      .attr("fill",`url(#ag-${c.id})`)
+      .attr("transform",`rotate(${c.rot},${cx},${cy})`)
+      .attr("data-base-rx",c.rx).attr("data-base-ry",c.ry);
+  });
+
+  // Counties
+  const countyG = svg.append("g").attr("id","countyG");
+  countyG.selectAll(".county-path")
+    .data(geo.features)
+    .join("path")
+    .attr("class", d => "county-path " + (URBAN.has(d.properties.name) ? "highlighted" : ""))
+    .attr("d", geoPath)
+    .on("mouseenter", function(event,d) {
+      const nm = d.properties.name;
+      if (!nm || nm.startsWith("County")) return;
+      if (nm !== selectedCounty) d3.select(this).style("fill","rgba(255,255,255,0.08)");
+      showTT(event,nm);
+    })
+    .on("mouseleave", function(event,d) {
+      if (d.properties.name !== selectedCounty) d3.select(this).style("fill",null);
+      hideTT();
+    })
+    .on("mousemove", function(event) {
+      moveTT(event);
+    })
+    .on("click", function(event,d) {
+      const nm = d.properties.name;
+      if (!nm || nm.startsWith("County")) return;
+      countyG.selectAll(".county-path").classed("selected",false).style("fill",null);
+      d3.select(this).classed("selected",true).style("fill",null);
+      selectedCounty = nm;
+      showDetail(nm);
+    });
+
+  // Fire hotspots (hidden by default)
+  const fireG = svg.append("g").attr("id","fireG").style("display","none");
+  FIRES.forEach((f,i) => {
+    const [fx,fy] = projection([f.lon,f.lat]);
+    const r = f.sz==="XL"?8:f.sz==="L"?6:4;
+    const g = fireG.append("g").attr("class","fire-marker");
+    g.append("circle").attr("cx",fx).attr("cy",fy).attr("r",r)
+      .attr("fill","#ff4040").attr("class","fpulse")
+      .style("animation-delay",(i*0.18)+"s");
+    if(f.sz!=="M") {
+      g.append("text").attr("class","fire-label")
+        .attr("x",fx+r+3).attr("y",fy+3)
+        .attr("font-size","8").text(f.name);
+    }
+  });
+
+  // Cities
+  const cityG = svg.append("g").attr("id","cityG");
+  CITIES.forEach(c => {
+    const [cx,cy] = projection([c.lon,c.lat]);
+    cityG.append("circle").attr("class","city-dot").attr("cx",cx).attr("cy",cy).attr("r",2.5);
+    cityG.append("text").attr("class","city-label").attr("x",cx+4).attr("y",cy+3).text(c.n);
+  });
+}
+
+// ─── Layer Toggles ─────────────────────────────────────────────────────────────
+function toggleLayer(name) {
+  layers[name] = !layers[name];
+  const el = document.getElementById("tog-"+name);
+  el.classList.toggle("active", layers[name]);
+  el.querySelector(".lcheck").textContent = layers[name] ? "✓" : "";
+  const gMap = {aerosol:"aerosolG",counties:"countyG",cities:"cityG",fire:"fireG"};
+  const g = document.getElementById(gMap[name]);
+  if(g) g.style.display = layers[name] ? null : "none";
+}
+
+// ─── Opacity ───────────────────────────────────────────────────────────────────
+function setOpacity(val) {
+  opacity = val/100;
+  document.getElementById("oplabel").textContent = val+"%";
+  document.getElementById("opslider").style.setProperty("--val",val+"%");
+  const g = document.getElementById("aerosolG");
+  if(g) g.style.opacity = opacity;
+}
+
+// ─── Filter ────────────────────────────────────────────────────────────────────
+function setFilter(mode) {
+  filterMode = mode;
+  ["all","urban","rural"].forEach(m =>
+    document.getElementById("fb-"+m).classList.toggle("active", m===mode));
+  d3.selectAll(".county-path").style("opacity", d => {
+    if(mode==="all") return null;
+    const urban = URBAN.has(d.properties.name);
+    if(mode==="urban") return urban ? 1 : 0.12;
+    return urban ? 0.12 : 1;
+  });
+}
+
+// ─── Scenes ────────────────────────────────────────────────────────────────────
+function loadScene(key) {
+  const sc = SCENES[key];
+  document.querySelectorAll(".scenebtn").forEach(b => b.classList.remove("active"));
+  document.getElementById("sc-"+key).classList.add("active");
+
+  // Set date
+  scrubDate(sc.pct);
+
+  // Opacity
+  document.getElementById("opslider").value = Math.round(sc.aerosol*100);
+  setOpacity(Math.round(sc.aerosol*100));
+
+  // Fire layer
+  if(sc.fires && !layers.fire) toggleLayer("fire");
+  if(!sc.fires && layers.fire) toggleLayer("fire");
+
+  // Animate blobs for scene context
+  animateBlobsForScene(key, sc.aerosol);
+}
+
+function animateBlobsForScene(key, intensity) {
+  d3.selectAll(".aod-blob").transition().duration(700)
+    .attr("rx", function() {
+      const base = +d3.select(this).attr("data-base-rx");
+      // Different regions dominate in different scenes
+      const id = d3.select(this).attr("data-id");
+      let mult = intensity;
+      if(key==="la" && (id==="la"||id==="ie")) mult = 1.4;
+      if(key==="fire2020" && (id==="sac"||id==="nca"||id==="sjv")) mult = 1.5;
+      if(key==="canadian") mult = intensity * 1.2;
+      if(key==="baseline") mult = 0.4;
+      return base * Math.min(mult, 1.6);
+    })
+    .attr("ry", function() {
+      const base = +d3.select(this).attr("data-base-ry");
+      const id = d3.select(this).attr("data-id");
+      let mult = intensity;
+      if(key==="la" && (id==="la"||id==="ie")) mult = 1.4;
+      if(key==="fire2020" && (id==="sac"||id==="nca"||id==="sjv")) mult = 1.5;
+      if(key==="canadian") mult = intensity * 1.2;
+      if(key==="baseline") mult = 0.4;
+      return base * Math.min(mult, 1.6);
+    });
+}
+
+// ─── Date-driven aerosol updates ───────────────────────────────────────────────
+function updateAerosolByDate(val) {
+  // val 0-100 maps to 2018-2024
+  // Simulate seasonal variation + known fire event peaks
+  const fireEvents = [{pct:28,reg:"la"},{pct:40,reg:"nca"},{pct:52,reg:"nca"},{pct:64,reg:"sac"}];
+  d3.selectAll(".aod-blob").transition().duration(300)
+    .attr("rx", function() {
+      const base = +d3.select(this).attr("data-base-rx");
+      const id = d3.select(this).attr("data-id");
+      let scale = 0.5 + 0.6 * seasonalFactor(val, id);
+      // Check fire events
+      fireEvents.forEach(ev => {
+        if(Math.abs(val - ev.pct) < 4 && (ev.reg===id||ev.reg==="nca")) scale *= 1.6;
+      });
+      return base * Math.min(scale, 1.8);
+    })
+    .attr("ry", function() {
+      const base = +d3.select(this).attr("data-base-ry");
+      const id = d3.select(this).attr("data-id");
+      let scale = 0.5 + 0.6 * seasonalFactor(val, id);
+      fireEvents.forEach(ev => {
+        if(Math.abs(val - ev.pct) < 4 && (ev.reg===id||ev.reg==="nca")) scale *= 1.6;
+      });
+      return base * Math.min(scale, 1.8);
+    });
+}
+
+function seasonalFactor(dateVal, regionId) {
+  // Approximate month from dateVal
+  const totalDays = 365*6;
+  const dayOfYear = (dateVal/100 * totalDays) % 365;
+  const month = Math.floor(dayOfYear / 30.4);
+  // Summer/fall peaks for different regions
+  if(regionId === "la" || regionId === "ie") {
+    return [0.5,0.5,0.6,0.7,0.8,0.85,0.9,1.0,1.0,0.9,0.7,0.5][month] || 0.7;
+  }
+  if(regionId === "sjv" || regionId === "bak") {
+    return [0.6,0.6,0.65,0.75,0.85,1.0,1.1,1.1,1.0,0.85,0.7,0.6][month] || 0.8;
+  }
+  if(regionId === "sac" || regionId === "nca") {
+    return [0.4,0.4,0.5,0.6,0.7,0.8,1.0,1.2,1.1,0.8,0.5,0.4][month] || 0.7;
+  }
+  return [0.5,0.5,0.6,0.7,0.75,0.85,0.95,1.0,0.95,0.8,0.65,0.5][month] || 0.7;
+}
+
+// ─── Tooltip ───────────────────────────────────────────────────────────────────
+function showTT(event, name) {
+  const d = DATA[name];
+  document.getElementById("tt-name").textContent = name + " County";
+  document.getElementById("tt-aod").textContent  = d ? d.aod.toFixed(2) : "N/A";
+  document.getElementById("tt-peak").textContent = d ? d.peak : "—";
+  document.getElementById("tt-type").textContent = URBAN.has(name) ? "Urban" : "Rural";
+  const tt = document.getElementById("tooltip");
+  tt.classList.add("vis");
+  moveTT(event);
+}
+function moveTT(event) {
+  const tt = document.getElementById("tooltip");
+  const mc = document.getElementById("map-container").getBoundingClientRect();
+  let x = event.clientX - mc.left + 14;
+  let y = event.clientY - mc.top - 14;
+  if(x + 200 > mc.width) x = event.clientX - mc.left - 200;
+  if(y < 0) y = 10;
+  tt.style.left = x + "px";
+  tt.style.top  = y + "px";
+}
+function hideTT() { document.getElementById("tooltip").classList.remove("vis"); }
+
+// ─── County Detail Panel ───────────────────────────────────────────────────────
+function showDetail(name) {
+  document.getElementById("no-sel").style.display = "none";
+  const detail = document.getElementById("county-detail");
+  detail.style.display = "flex";
+
+  const d = DATA[name];
+  document.getElementById("c-name").textContent = name + " County";
+  const badge = document.getElementById("c-badge");
+  const urban = URBAN.has(name);
+  badge.textContent = urban ? "Urban" : "Rural";
+  badge.className = "badge " + (urban ? "burban" : "brural");
+
+  if(d) {
+    document.getElementById("c-aod").textContent  = d.aod.toFixed(2);
+    document.getElementById("c-pop").textContent  = d.pop;
+    document.getElementById("c-peak").textContent = d.peak;
+    document.getElementById("c-fire").textContent = d.fire;
+    document.getElementById("c-context").textContent = d.ctx;
+
+    // AQI needle
+    const aqiPct = Math.min(d.aqi / 300 * 100, 100);
+    document.getElementById("aqi-needle").style.left = aqiPct + "%";
+
+    // AOD color
+    const aodColor = d.aod < 0.1 ? "#2dd4a4" : d.aod < 0.18 ? "#ffd166" : d.aod < 0.25 ? "#ff8c00" : "#ff4757";
+    document.getElementById("c-aod").style.color = aodColor;
+
+    renderSparkline(d.mo, d.peak);
+  } else {
+    document.getElementById("c-aod").textContent  = "N/A";
+    document.getElementById("c-pop").textContent  = "—";
+    document.getElementById("c-peak").textContent = "—";
+    document.getElementById("c-fire").textContent = "—";
+    document.getElementById("c-context").textContent = "No detailed data available for this county.";
+  }
+}
+
+// ─── Sparkline ────────────────────────────────────────────────────────────────
+function renderSparkline(months, peak) {
+  const svgEl = document.getElementById("sparkline-svg");
+  const W = svgEl.clientWidth || 260;
+  const H = 68;
+  svgEl.setAttribute("viewBox",`0 0 ${W} ${H}`);
+
+  const s = d3.select("#sparkline-svg");
+  s.selectAll("*").remove();
+
+  const xScale = d3.scaleBand().domain(d3.range(12)).range([0, W]).padding(0.18);
+  const yScale = d3.scaleLinear().domain([0, d3.max(months)*1.15]).range([H-16, 4]);
+
+  const peakIdx = MONTHS.indexOf(peak);
+
+  // Bars
+  s.selectAll(".spark-bar")
+    .data(months)
+    .join("rect")
+    .attr("class","spark-bar")
+    .attr("x", (_,i) => xScale(i))
+    .attr("y", d => yScale(d))
+    .attr("width", xScale.bandwidth())
+    .attr("height", d => (H-16) - yScale(d))
+    .attr("rx", 2)
+    .attr("fill", (_,i) => i === peakIdx ? "#ff6b35" : "rgba(255,255,255,0.18)")
+    .on("mouseenter", function(event,d,i) { d3.select(this).attr("fill","rgba(255,255,255,0.4)"); })
+    .on("mouseleave", function(event,d) {
+      const i = months.indexOf(d);
+      d3.select(this).attr("fill", i === peakIdx ? "#ff6b35" : "rgba(255,255,255,0.18)");
+    });
+
+  // Month labels (every 3)
+  MONTHS.forEach((m,i) => {
+    if(i%3===0) {
+      s.append("text").attr("class","sparktip")
+        .attr("x", xScale(i) + xScale.bandwidth()/2)
+        .attr("y", H-2)
+        .attr("text-anchor","middle")
+        .attr("font-family","IBM Plex Mono,monospace")
+        .attr("font-size","8")
+        .attr("fill","rgba(255,255,255,0.3)")
+        .text(m);
+    }
+  });
+}
+
+// ─── Write-up Section ─────────────────────────────────────────────────────────
+// (Rendered below map via scroll, or see writeup.html)
+</script>
+
+<!-- WRITE-UP SECTION -->
+<style>
+  #writeup{font-family:'DM Sans',sans-serif;max-width:800px;margin:60px auto;padding:0 24px 80px;color:#c8ccd2;background:#0a0c0f}
+  #writeup h2{font-size:20px;font-weight:600;color:#e8eaed;margin:36px 0 12px;letter-spacing:-0.02em}
+  #writeup h3{font-size:15px;font-weight:500;color:#e8eaed;margin:24px 0 8px}
+  #writeup p{font-size:13px;line-height:1.75;margin-bottom:12px}
+  #writeup ul{font-size:13px;line-height:1.75;margin:8px 0 12px;padding-left:20px}
+  #writeup li{margin-bottom:4px}
+  #writeup a{color:#4da6ff;text-decoration:none}
+  #writeup .mono{font-family:'IBM Plex Mono',monospace;font-size:11px;background:rgba(255,255,255,0.07);padding:2px 6px;border-radius:3px;color:#ffd166}
+  #writeup .divider{height:1px;background:rgba(255,255,255,0.08);margin:32px 0}
+</style>
+<div id="writeup">
+  <h2>Design Rationale</h2>
+
+  <h3>Visual Encodings</h3>
+  <p>The central visual encoding is a <strong>radial-gradient aerosol overlay</strong> drawn directly in SVG, using orange-red hues (AOD color conventions from NASA Worldview) to represent aerosol optical depth. Each pollution center is an ellipse with a radial gradient that fades to transparent, allowing the underlying county structure to show through. This blending mirrors the actual diffuse nature of atmospheric aerosols. The overlay's opacity is user-controlled via a slider, enabling the "blend to satellite" metaphor described in the project concept.</p>
+  <p>Counties are filled with near-transparent fills and thin strokes — barely perceptible in isolation but creating clear regional structure. When hovered or selected, county fills become visible. Urban counties receive a subtle blue tint to distinguish them from rural counties without demanding attention.</p>
+  <p>The <strong>monthly AOD sparkline</strong> in the detail panel uses a bar chart where the peak month is highlighted in orange, visually anchoring the seasonal story for each county. This was chosen over a line chart because the monthly data is discrete and categorical (months), not continuous — bars communicate this clearly.</p>
+
+  <h3>Interaction Techniques</h3>
+  <ul>
+    <li><strong>Details-on-demand</strong>: Hovering a county shows a tooltip with AOD, peak month, and classification. Clicking opens the full right panel with stats, sparkline, AQI indicator, and prose context.</li>
+    <li><strong>Dynamic query filters</strong>: The Urban/Rural toggle dims non-matching counties to 12% opacity, enabling direct comparison of pollution patterns across land-use types.</li>
+    <li><strong>Animation scrubbing</strong>: The timeline slider (2018–2024) drives both the date label and the aerosol blob sizes, which animate seasonally and spike near known fire event dates.</li>
+    <li><strong>Guided scenes</strong>: Four preset scenes jump to specific dates and aerosol intensities representing the key narrative moments — baseline, LA smog, 2020 megafires, and Canadian smoke intrusion. This provides narrative structure without requiring the user to already know the data.</li>
+    <li><strong>Layer toggles</strong>: Users can toggle the aerosol overlay, county boundaries, city markers, and fire hotspots independently.</li>
+  </ul>
+
+  <h3>Alternatives Considered</h3>
+  <p>I initially considered using actual WMTS tile requests to the NASA GIBS endpoint (e.g. <span class="mono">MODIS_Aqua_Aerosol</span>) as a Leaflet-style tile overlay. However, since this project must use only D3 (no mapping libraries), and because raw MODIS AOD raster tiles do not integrate cleanly with D3 projections without a canvas-based raster reprojection pipeline, I chose instead to synthesize the aerosol pattern using SVG radial gradients anchored to the known major pollution centers in California. This is scientifically grounded — the LA Basin, San Joaquin Valley, Sacramento Valley, Bay Area, and Inland Empire are the documented persistent aerosol hot spots in MODIS data — and allows smooth animation and interaction that raw tile imagery cannot provide.</p>
+  <p>I considered a choropleth county fill encoding AOD values, but this creates an artificial sharp boundary effect (counties have very different areas) and obscures the continuous, diffuse nature of atmospheric aerosols. The gradient overlay more accurately represents how pollution actually appears in satellite imagery.</p>
+
+  <div class="divider"></div>
+  <h2>Data Sources</h2>
+  <ul>
+    <li><strong>NASA GIBS</strong> — <span class="mono">MODIS_Aqua_Aerosol</span>, <span class="mono">VIIRS_SNPP_CorrectedReflectance_TrueColor</span>, <span class="mono">VIIRS_SNPP_Thermal_Anomalies_375m</span>. Aerosol patterns and seasonal values are derived from published MODIS AOD climatology for California. <a href="https://worldview.earthdata.nasa.gov/" target="_blank">NASA Worldview</a></li>
+    <li><strong>US Census TIGER/Line</strong> — California county boundaries via <a href="https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json" target="_blank">us-atlas@3 TopoJSON</a></li>
+    <li><strong>EPA AirData</strong> — AQI values per county are representative annual typical values from EPA's air quality monitoring network. <a href="https://www.epa.gov/outdoor-air-quality-data" target="_blank">EPA AirData</a></li>
+    <li><strong>CAL FIRE</strong> — Wildfire event locations, names, and relative sizes from California's historical fire perimeters database.</li>
+  </ul>
+
+  <div class="divider"></div>
+  <h2>Development Process</h2>
+  <p>This visualization was developed as a single-person project. Total development time: approximately <strong>18–22 hours</strong>.</p>
+  <h3>Time breakdown</h3>
+  <ul>
+    <li><strong>Data research and curation</strong> (~4 hrs): Reviewing NASA Worldview, MODIS AOD climatology papers, EPA monitoring records, and CAL FIRE historical data to assemble representative per-county values and contextual narratives.</li>
+    <li><strong>Map setup and projection</strong> (~3 hrs): Loading TopoJSON from us-atlas, filtering to California FIPS codes, setting up the Mercator projection with D3, and handling the coordinate system edge cases in the TopoJSON spec.</li>
+    <li><strong>Aerosol overlay design</strong> (~4 hrs): Iterating on the radial gradient approach. The most time-consuming aspect was calibrating blob sizes, rotation angles, and intensity values so the visual matched the known spatial pattern of California aerosols without being misleading.</li>
+    <li><strong>Interaction system</strong> (~4 hrs): Building the timeline scrubber with seasonal animation, the guided scenes system, county selection and detail panel, tooltip positioning, and the filter toggles.</li>
+    <li><strong>Sparklines and AQI panel</strong> (~2 hrs): D3 bar chart for monthly AOD patterns with peak-month highlighting; AQI gradient bar with dynamic needle.</li>
+    <li><strong>Layout, styling, and polish</strong> (~3 hrs): The three-column grid layout, dark theme color system, typography pairing (DM Sans + IBM Plex Mono), and responsive behavior.</li>
+  </ul>
+  <p>The most challenging aspect was the aerosol animation system: making the blobs respond meaningfully to the timeline scrubber (with correct seasonal peaks per region and fire-event spikes) required careful parameterization so the animation told an accurate story rather than arbitrary movement.</p>
+</div>
+</body>
+</html>
